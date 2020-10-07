@@ -5,13 +5,16 @@ from transformers import AutoModel
 from transformers.modeling_outputs import TokenClassifierOutput
 
 class Coref(nn.Module):
-    def __init__(self, config, device):
+    def __init__(self, config, device, spanbert_save_path=None):
         super(Coref, self).__init__()
         
         self.config = config
         self.device = device
         self.span_rep_size = 3*config['spanbert_out'] + config['width_encoding_feature_size']
-        self.spanBERT = AutoModel.from_pretrained("SpanBERT/spanbert-base-cased")
+        if spanbert_save_path is None:
+            self.spanBERT = AutoModel.from_pretrained("SpanBERT/spanbert-base-cased")
+        else:
+            self.spanBERT = AutoModel.from_pretrained(spanbert_save_path)
         self.ffnn_alpha = nn.Linear(config['spanbert_out'], 1)
         self.dropout = nn.Dropout(config['dropout_rate'])
         self.softmax = nn.Softmax(dim=1)
@@ -42,12 +45,11 @@ class Coref(nn.Module):
     ):
 
         # Get the output from SpanBERT model as x_t^*
-        
         outputs = self.spanBERT(
             input_ids, 
             attention_mask=attention_mask,
         )
-
+        
         sequence_output = self.dropout(outputs[0]) # [num_sentences, max_sent_len, emb_dim]
         
         # Remove padding and flatten the spanBERT embeddings (x_t^*) 
@@ -60,7 +62,7 @@ class Coref(nn.Module):
         sentence_map = torch.masked_select(sentence_map, attention_mask>0)
 
         num_words =  sequence_output.shape[0]
-
+        
         # Get candidate start indices and end indices as 1d tensors
 
         candidate_starts = torch.unsqueeze(torch.arange(num_words), 1).repeat(1, self.config['max_span_width']).to(self.device) # [num_words, max_span_width]
@@ -74,10 +76,10 @@ class Coref(nn.Module):
         candidate_sentence_indices = torch.masked_select(candidate_start_sentence_indices.view(-1, ), flattened_candidate_mask) # [num_candidates]
         
         candidate_cluster_ids = self.get_candidate_labels(candidate_starts, candidate_ends, gold_starts, gold_ends, cluster_ids)
-
+        
         # Get Span representations
         span_representations = self.get_span_representations(sequence_output, candidate_starts, candidate_ends)
-
+        
         # Get Mention Scores(s_m)
         span_mention_scores = self.dropout(self.ffnm_m(span_representations))
         span_mention_scores = span_mention_scores.view(-1, )
@@ -119,7 +121,7 @@ class Coref(nn.Module):
             f = self.sigmoid(self.ffnm_f(torch.cat((top_span_representations, attended_span_emb), 1))) # [m, emb]
 
             top_span_representations = f * attended_span_emb + (1 - f) * top_span_representations # [m, emb]
-            
+
         top_antecedent_scores = torch.cat((dummy_scores, top_antecedent_scores), 1)
 
         
@@ -134,7 +136,7 @@ class Coref(nn.Module):
         top_antecedent_labels = torch.cat([dummy_labels, pairwise_labels], 1) # [m, k + 1]
 
         loss = self.softmax_loss(top_antecedent_scores, top_antecedent_labels)
-        loss = torch.sum(loss)
+        loss = torch.sum(loss.float())
         
         return [candidate_starts, candidate_ends, span_mention_scores, top_span_starts, top_span_ends, top_antecedents, top_antecedent_scores], loss
 

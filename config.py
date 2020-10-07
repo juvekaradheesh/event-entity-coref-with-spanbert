@@ -9,5 +9,5 @@ config ={
     'coref_depth': 2,
     'width_encoding_feature_size': 20,
 
-    'learning_rate': 0.00001
+    'learning_rate': 0.000001
 }

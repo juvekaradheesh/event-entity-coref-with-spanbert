@@ -9,7 +9,7 @@ from src.data_loader import ECBDataset
 from src.utils import *
 from tqdm import tqdm
 
-def train(num_epoch, train_loader, model, optimizer, model_path, device):
+def train(num_epoch, train_loader, model, optimizer, model_path, device, spanbert_save_path):
     
     writer = SummaryWriter()
 
@@ -18,7 +18,7 @@ def train(num_epoch, train_loader, model, optimizer, model_path, device):
         epoch_loss = 0
         for i, batch in enumerate(tqdm(train_loader)):
             model.train()
-
+            print(len(batch['input_ids'][0]))
             input_ids = batch['input_ids'][0].to(device)
             attention_mask = batch['attention_mask'][0].to(device)
             sentence_map = batch['sentence_map'][0].to(device)
@@ -40,42 +40,44 @@ def train(num_epoch, train_loader, model, optimizer, model_path, device):
             epoch_loss += loss
         
         torch.save(model.state_dict(), model_path)
+        model.spanBERT.save_pretrained(spanbert_save_path)
         writer.add_scalar('Loss/train', loss, epoch)
         print("Loss = ", epoch_loss/len(train_loader))
     
     writer.close()
 
 def evaluate(test_loader, model, device):
-    epoch_loss = 0
-    for i, batch in enumerate(tqdm(test_loader)):
-        model.eval()
-        
-        input_ids = batch['input_ids'][0].to(device)
-        attention_mask = batch['attention_mask'][0].to(device)
-        sentence_map = batch['sentence_map'][0].to(device)
-        gold_starts = batch['gold_starts'][0].to(device)
-        gold_ends = batch['gold_ends'][0].to(device)
-        cluster_ids = batch['cluster_ids'][0].to(device)
+    
+    model.eval()
+    with torch.no_grad():
+        epoch_loss = 0
+        for i, batch in enumerate(tqdm(test_loader)):            
+            
+            input_ids = batch['input_ids'][0].to(device)
+            attention_mask = batch['attention_mask'][0].to(device)
+            sentence_map = batch['sentence_map'][0].to(device)
+            gold_starts = batch['gold_starts'][0].to(device)
+            gold_ends = batch['gold_ends'][0].to(device)
+            cluster_ids = batch['cluster_ids'][0].to(device)
 
-        print(cluster_ids)
+            predictions, loss = model(
+                input_ids=input_ids, 
+                attention_mask=attention_mask, 
+                sentence_map=sentence_map,
+                gold_starts=gold_starts,
+                gold_ends=gold_ends,
+                cluster_ids=cluster_ids
+                )
 
-        predictions, loss = model(
-            input_ids=input_ids, 
-            attention_mask=attention_mask, 
-            sentence_map=sentence_map,
-            gold_starts=gold_starts,
-            gold_ends=gold_ends,
-            cluster_ids=cluster_ids
-            )
+            epoch_loss += loss
 
-        print(predictions)
-        print(loss)
-        epoch_loss += loss
-        if i==2:
-            break
     print("Loss = ", epoch_loss/len(test_loader))
 
-    
+# def predict(loader, model, device, offset_mapping, sentences, batch_indices):
+#     model.eval()
+#     with torch.no_grad():
+
+
 if __name__ == "__main__":
 
     device = torch.device("cpu")
@@ -116,4 +118,4 @@ if __name__ == "__main__":
     model = Coref(config, device)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.00001)
-    train(num_epoch, loader, model, optimizer, 'models/temp.pt', device)
+    train(num_epoch, loader, model, optimizer, 'models/temp.pt', device, 'models/spanbert_TEMP')
